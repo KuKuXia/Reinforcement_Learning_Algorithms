@@ -1,6 +1,8 @@
 {
     "python.pythonPath": "/home/longxiajun/MySoftware/anaconda3/envs/CV/bin/python",
     "cSpell.ignoreWords": [
-        "aout"
+        "aout",
+        "cart",
+        "xdot"
     ]
 }
