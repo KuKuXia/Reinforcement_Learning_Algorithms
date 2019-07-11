@@ -9,7 +9,7 @@ if __name__ == "__main__":
     GAMMA = 1.0
 
     Q = {}
-    agentSumSpace = [i for i in range(4, 32)]
+    agentSumSpace = [i for i in range(4, 22)]
     dealerShowCardSpace = [i + 1 for i in range(10)]
     agentAceSpace = [False, True]
     actionSpace = [0, 1]  # Stick or hit

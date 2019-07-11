@@ -6,104 +6,112 @@ import numpy as np
 
 
 class DeepQNetwork(nn.Module):
-    def __init__(self, ALPHA):
+    def __init__(self, ALPHA, input_dims, fc1_dims, fc2_dims,
+                 n_actions):
         super(DeepQNetwork, self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, 8, stride=4, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, 4, stride=2)
-        self.conv3 = nn.Conv2d(64, 128, 3)
-        self.fc1 = nn.Linear(128 * 19 * 8, 512)
-        self.fc2 = nn.Linear(512, 6)
-
-        self.optimizer = optim.RMSprop(self.parameters(), lr=ALPHA)
+        self.input_dims = input_dims
+        self.fc1_dims = fc1_dims
+        self.fc2_dims = fc2_dims
+        self.n_actions = n_actions
+        self.fc1 = nn.Linear(*self.input_dims, self.fc1_dims)
+        self.fc2 = nn.Linear(self.fc1_dims, self.fc2_dims)
+        self.fc3 = nn.Linear(self.fc2_dims, self.n_actions)
+        self.optimizer = optim.Adam(self.parameters(), lr=ALPHA)
         self.loss = nn.MSELoss()
-        self.device = T.device('cuda:1' if T.cuda.is_available() else 'cpu')
+        self.device = T.device('cuda:0' if T.cuda.is_available() else 'cuda:1')
         self.to(self.device)
 
     def forward(self, observation):
-        observation = T.Tensor(observation).to(self.device)
-        observation = observation.view(-1, 1, 185, 95)
-        observation = F.relu(self.conv1(observation))
-        observation = F.relu(self.conv2(observation))
-        observation = F.relu(self.conv3(observation))
-        observation = observation.view(-1, 128 * 19 * 8)
-        observation = F.relu(self.fc1(observation))
-
-        actions = self.fc2(observation)
-
+        state = T.Tensor(observation).to(self.device)
+        #observation = observation.view(-1)
+        x = F.relu(self.fc1(state))
+        x = F.relu(self.fc2(x))
+        actions = self.fc3(x)
         return actions
 
 
 class Agent(object):
-    def __init__(self, gamma, epsilon, alpha, maxMemorySize, epsEnd=0.05, replace=10000, actionSpace=[0, 1, 2, 3, 4, 5]):
+    def __init__(self, gamma, epsilon, alpha, input_dims, batch_size, n_actions,
+                 max_mem_size=100000, eps_end=0.01, eps_dec=0.996):
         self.GAMMA = gamma
         self.EPSILON = epsilon
-        self.EPS_END = epsEnd
+        self.EPS_MIN = eps_end
+        self.EPS_DEC = eps_dec
         self.ALPHA = alpha
-        self.actionSpace = actionSpace
-        self.memSize = maxMemorySize
-        self.steps = 0
-        self.learn_step_counter = 0
-        self.memory = []
-        self.memCounter = 0
-        self.replace_target_cnt = replace
-        self.Q_eval = DeepQNetwork(alpha)
-        self.Q_next = DeepQNetwork(alpha)
+        self.action_space = [i for i in range(n_actions)]
+        self.n_actions = n_actions
+        self.mem_size = max_mem_size
+        self.batch_size = batch_size
+        self.mem_counter = 0
+        self.Q_eval = DeepQNetwork(alpha, n_actions=self.n_actions,
+                                   input_dims=input_dims, fc1_dims=256, fc2_dims=256)
+        self.state_memory = np.zeros((self.mem_size, *input_dims))
+        self.new_state_memory = np.zeros((self.mem_size, *input_dims))
+        self.action_memory = np.zeros((self.mem_size, self.n_actions),
+                                      dtype=np.uint8)
+        self.reward_memory = np.zeros(self.mem_size)
+        self.terminal_memory = np.zeros(self.mem_size, dtype=np.uint8)
 
-    def storeTransition(self, state, action, reward, state_):
-        if self.memCounter < self.memSize:
-            self.memory.append([state, action, reward, state_])
-        else:
-            self.memory[self.memCounter % self.memSize] = [
-                state, action, reward, state_]
-        self.memCounter += 1
+    def storeTransition(self, state, action, reward, state_, terminal):
+        index = self.mem_counter % self.mem_size
+        self.state_memory[index] = state
+        actions = np.zeros(self.n_actions)
+        actions[action] = 1.0
+        self.action_memory[index] = actions
+        self.reward_memory[index] = reward
+        self.new_state_memory[index] = state_
+        self.terminal_memory[index] = 1 - terminal
+        self.mem_counter += 1
 
     def chooseAction(self, observation):
         rand = np.random.random()
         actions = self.Q_eval.forward(observation)
-        if rand < 1 - self.EPSILON:
-            action = T.argmax(actions[1]).item()
+        if rand > self.EPSILON:
+            action = T.argmax(actions).item()
         else:
-            action = np.random.choice(self.actionSpace)
-        self.steps += 1
+            action = np.random.choice(self.action_space)
         return action
 
-    def learn(self, batch_size):
-        self.Q_eval.optimizer.zero_grad()
-        if self.replace_target_cnt is not None and self.learn_step_counter % self.replace_target_cnt == 0:
-            self.Q_next.load_state_dict(self.Q_eval.state_dict())
-        if self.memCounter + batch_size < self.memSize:
-            memStart = int(np.random.choice(range(self.memCounter-batch_size)))
-        else:
-            memStart = int(np.random.choice(
-                range(self.memSize - batch_size - 1)))
-        miniBatch = self.memory[memStart: memStart + batch_size]
-        memory = np.array(miniBatch)
-        # print('the shape of miniBatch is: ', memory.shape)
+    def learn(self):
+        if self.mem_counter > self.batch_size:
+            self.Q_eval.optimizer.zero_grad()
 
-        # convert to list because memory is an array of numpy objects
-        Q_pred = self.Q_eval.forward(
-            list(memory[:, 0][:])).to(self.Q_eval.device)
-        Q_next = self.Q_next.forward(
-            list(memory[:, 3][:])).to(self.Q_eval.device)
+            max_mem = self.mem_counter if self.mem_counter < self.mem_size \
+                else self.mem_size
 
-        maxA = T.argmax(Q_next, dim=1).to(self.Q_eval.device)
-        rewards = T.Tensor(list(memory[:, 2])).to(self.Q_eval.device)
-        Q_target = Q_pred
+            batch = np.random.choice(max_mem, self.batch_size)
+            state_batch = self.state_memory[batch]
+            action_batch = self.action_memory[batch]
+            action_values = np.array(self.action_space, dtype=np.uint8)
+            action_indices = np.dot(action_batch, action_values)
+            reward_batch = self.reward_memory[batch]
+            new_state_batch = self.new_state_memory[batch]
+            terminal_batch = self.terminal_memory[batch]
 
-        indices = np.arange(batch_size)
-        if Q_next.shape[0] == 32:
-            Q_target[indices, maxA] = rewards + self.GAMMA * T.max(Q_next[1])
+            reward_batch = T.Tensor(reward_batch).to(self.Q_eval.device)
+            terminal_batch = T.Tensor(terminal_batch).to(self.Q_eval.device)
 
-            if self.steps > 500:
-                if self.EPSILON - 1e-4 > self.EPS_END:
-                    self.EPSILON -= 1e-4
-                else:
-                    self.EPSILON = self.EPS_END
+            q_eval = self.Q_eval.forward(state_batch).to(self.Q_eval.device)
+            # q_target = self.Q_eval.forward(state_batch).to(self.Q_eval.device)
+            q_target = q_eval.clone()
+            q_next = self.Q_eval.forward(
+                new_state_batch).to(self.Q_eval.device)
 
-            # Q_pred.requires_grad_()
-            loss = self.Q_eval.loss(Q_target, Q_pred).to(self.Q_eval.device)
-            loss.backward()
+            batch_index = np.arange(self.batch_size, dtype=np.int32)
+            # print('Batch_index: ', batch_index.shape)
+            # print('Reward batch: ', reward_batch.shape)
+            # print('action indices:', action_indices.shape)
+            # print('terminal batch: ', terminal_batch.shape)
+            a =  reward_batch + T.max(q_next, dim=1)[0] * terminal_batch
+            # print(a.shape)
+            # print(q_target.shape)
+            # print(q_target[action_batch].shape)
+            q_target[action_batch] = reward_batch + \
+                self.GAMMA*T.max(q_next, dim=1)[0]*terminal_batch
+
+            self.EPSILON = self.EPSILON*self.EPS_DEC if self.EPSILON > \
+                self.EPS_MIN else self.EPS_MIN
+
+            loss = self.Q_eval.loss(q_target, q_eval).to(self.Q_eval.device)
+            loss.backward() 
             self.Q_eval.optimizer.step()
-            self.learn_step_counter += 1
-        else:
-            print("The shape of Q_next", Q_next.shape)

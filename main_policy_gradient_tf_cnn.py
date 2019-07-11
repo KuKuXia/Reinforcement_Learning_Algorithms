@@ -5,6 +5,9 @@ from Policy_Gradient_TF_CNN import PolicyGradientAgent
 from utils import plotLearning_no_epsilon
 from gym import wrappers
 
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '2'
+
 
 def preprocess(observation):
     return np.mean(observation[15:200, 30:125], axis=2)
@@ -25,7 +28,7 @@ if __name__ == "__main__":
     load_checkpoint = False
     agent = PolicyGradientAgent(lr=0.001, gamma=0.9, n_actions=6, fc1=256,
                                 checkpoint_dir='tmp/checkpoint-newG-op001', gpu={'GPU': 1})
-    filename = 'space-invaders-alpha001.png'
+    filename = './images/space-invaders-alpha001.png'
     print("Will use ", filename, ' and ', agent.gpu)
     if load_checkpoint:
         agent.load_checkpoint()
@@ -53,7 +56,7 @@ if __name__ == "__main__":
         stacked_frames = None
         stacked_frames = stack_frames(stacked_frames, observation, stack_size)
         score = 0
-        
+
         while not done:
             action = agent.choose_action(stacked_frames)
             observation, reward, done, info = env.step(action)
