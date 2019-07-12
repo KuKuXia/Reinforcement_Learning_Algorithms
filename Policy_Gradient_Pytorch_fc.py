@@ -37,7 +37,7 @@ class PolicyGradientAgent(object):
             ALPHA, input_dims, layer1_size, layer2_size, n_actions)
 
     def choose_action(self, observation):
-        probabilities = F.softmax(self.policy.forward(observation))
+        probabilities = F.softmax(self.policy.forward(observation),dim=0)  # dim = 0: column,  dim = 1: row 
         action_probabilities = T.distributions.Categorical(probabilities)
         action = action_probabilities.sample()
         log_probabilities = action_probabilities.log_prob(action)

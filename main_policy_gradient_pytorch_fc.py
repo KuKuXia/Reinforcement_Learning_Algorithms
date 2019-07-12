@@ -13,7 +13,7 @@ if __name__ == "__main__":
     env = gym.make('LunarLander-v2')
     score_history = []
     score = 0
-    num_episode = 2500
+    num_episode = 500
 
     env = wrappers.Monitor(env, 'tmp/lunar-lander',
                            video_callable=lambda episode_id: True, force=True)
